@@ -86,6 +86,7 @@ load_dotenv()
 
 from image_processing import ImageProcessor
 from video_processing import VideoProcessor
+from audio_processing import AudioProcessor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -101,6 +102,9 @@ image_processor = ImageProcessor(
 
 video_processor = VideoProcessor(
     serp_api_key=os.getenv("SERP_API_KEY"),
+    openai_api_key=os.getenv("OPENAI_API_KEY")
+)
+audio_processor = AudioProcessor(
     openai_api_key=os.getenv("OPENAI_API_KEY")
 )
 
@@ -173,6 +177,59 @@ async def analyze_video_url(video_url: str = Query(..., description="Video URL t
     except Exception as e:
         logger.error(f"Error processing video URL: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/analyze-audio/")
+async def analyze_audio_file(file: UploadFile = File(...)) -> Dict[str, Any]:
+    """Transcribe uploaded audio file"""
+    try:
+        if not file.content_type.startswith('audio/'):
+            raise HTTPException(status_code=400, detail="File must be an audio type")
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
+            content = await file.read()
+            tmp_file.write(content)
+            tmp_file_path = tmp_file.name
+        try:
+            transcription = audio_processor.transcribe_audio(tmp_file_path)
+            if not transcription:
+                raise Exception("Transcription failed")
+            return {
+                "filename": file.filename,
+                "status": "success",
+                "transcription": transcription
+            }
+        finally:
+            os.unlink(tmp_file_path)
+    except Exception as e:
+        logger.error(f"Error processing audio: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/analyze-audio-url/")
+async def analyze_audio_url(audio_url: str = Query(..., description="Audio URL to analyze")) -> Dict[str, Any]:
+    """Download audio from URL and transcribe it using Whisper."""
+    try:
+        import requests
+        # Download
+        response = requests.get(audio_url, stream=True, timeout=60)
+        response.raise_for_status()
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
+            for chunk in response.iter_content(chunk_size=8192):
+                tmp_file.write(chunk)
+            tmp_file_path = tmp_file.name
+        try:
+            transcription = audio_processor.transcribe_audio(tmp_file_path)
+            if not transcription:
+                raise Exception("Transcription failed")
+            return {
+                "audio_url": audio_url,
+                "status": "success",
+                "transcription": transcription
+            }
+        finally:
+            os.unlink(tmp_file_path)
+    except Exception as e:
+        logger.error(f"Error processing audio URL: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/health")
 async def health_check():
