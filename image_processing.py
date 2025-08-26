@@ -10,61 +10,7 @@ class ImageProcessor:
         self.serp_api_key = serp_api_key
         if openai_api_key:
             self.client = openai.OpenAI(api_key=openai_api_key)
-    def extract_text_from_image(self, image_url: str) -> str:
-        """Extract visible text from image using OpenAI Vision or fallback OCR"""
-        if not hasattr(self, 'client'):
-            return "OCR unavailable"
-        print("IMG URL",image_url)
-        try:
-            
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "user", "content": [
-                        {"type": "text", "text": "Extract all visible text from this image."},
-                        {"type": "image_url", "image_url": {"url": image_url}}
-                    ]}
-                ],
-                max_tokens=500
-            )
-            
-            print("RESPONSE", response)
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            logger.error(f"OCR extraction failed: {e}")
-            return "Text extraction failed"
-    def _get_combined_context(self, visual_matches: List[Dict], ocr_text: str) -> str:
-        """Use LLM to synthesize context from OCR and visual matches"""
-        if not hasattr(self, 'client'):
-            return "Context synthesis unavailable"
-
-        try:
-            visual_text = "\n".join([
-                f"Title: {match.get('title', 'N/A')}\nSnippet: {match.get('snippet', 'N/A')}\n"
-                for match in visual_matches[:5]
-            ])
-
-            prompt = f"""Analyze the following OCR-extracted text and visual search results to generate a clear, concise context about what this image likely represents.
-
-    OCR Text:
-    {ocr_text}
-
-    Visual Matches:
-    {visual_text}
-
-    Focus on factual interpretation and common themes."""
-
-            response = self.client.chat.completions.create(
-                model="gpt-4.1-mini",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=300,
-                temperature=0.2
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            logger.error(f"Error generating combined context: {e}")
-            return "Combined context generation failed"
-
+    
     def get_google_lens_context(self, image_url: str) -> Dict[str, Any]:
         """Get Google Lens context with BOOM fact-check filtering using requests"""
         try:
@@ -81,8 +27,7 @@ class ImageProcessor:
             response = requests.get(url, params=params, timeout=30)
             response.raise_for_status()
             results = response.json()
-            ocr_text = self.extract_text_from_image(image_url)
-            print("OCR TEXT", ocr_text)
+            
             visual_matches = results.get("visual_matches", [])
             
             # Filter BOOM fact-check articles
@@ -90,7 +35,7 @@ class ImageProcessor:
                 match for match in visual_matches 
                 if "boomlive.in" in match.get("link", "").lower()
             ]
-            combined_context = self._get_combined_context(visual_matches, ocr_text)
+            
             if boom_articles:
                 return {
                     "source": "boom_factcheck",
@@ -101,7 +46,7 @@ class ImageProcessor:
             # If no BOOM articles, get general context using LLM
             return {
                 "source": "general_context", 
-                "context": combined_context,
+                "context": self._get_general_context(visual_matches),
                 "matches": visual_matches[:5]  # Top 5 matches
             }
             
